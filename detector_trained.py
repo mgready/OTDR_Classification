@@ -28,7 +28,8 @@ def detect(km, db, db_s, zones_m, params):
     b = _bundle()
     exp = params.get("expected_m", b["expected_m"])
 
-    out = analyze_trends(km, db, expected_length_m=exp)
+    out = analyze_trends(km, db, expected_length_m=exp,
+                         region_method=params.get("region_method", "variance"))
     feat = trace_features(out, exp)
     x = np.array([[feat[c] for c in b["features"]]])
     cls = int(b["model"].predict(x)[0])

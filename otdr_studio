@@ -1,4 +1,5 @@
-#!/usr/bin/env python3
+import os
+os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 """
 otdr_studio.py — integrated OTDR trend viewer / annotator.
 
@@ -95,7 +96,7 @@ def detect_regression_channel(km, db, db_s, zones_m, params):
     break_frac = params.get("break_frac", 0.85)
     bend_drop = params.get("bend_drop", 0.8)
 
-    start, eof = find_valid_region(km, db)
+    start, eof = find_valid_region(km, db, method=params.get("region_method", "variance"))
     ig = _ignore_mask(km, zones_m)
     x = km[start:eof]
     ys = db_s[start:eof]
@@ -139,7 +140,8 @@ def detect_regression_channel(km, db, db_s, zones_m, params):
 
 def detect_piecewise(km, db, db_s, zones_m, params):
     from otdr_trends import analyze_trends
-    out = analyze_trends(km, db, expected_length_m=params.get("expected_m", 150.0))
+    out = analyze_trends(km, db, expected_length_m=params.get("expected_m", 150.0),
+                         region_method=params.get("region_method", "variance"))
     trends = []
     for s in out["segments"]:
         xs = km[s["i0"]:s["i1"]] * 1000.0
@@ -290,8 +292,12 @@ class Studio(QMainWindow):
         g = QGroupBox("Trend detector"); v = QVBoxLayout(g)
         self.det_combo = QComboBox(); self.det_combo.addItems(list(DETECTORS) + ["Load custom model…"])
         self.det_combo.currentIndexChanged.connect(self._detector_changed); v.addWidget(self.det_combo)
+        r = QHBoxLayout(); r.addWidget(QLabel("region method"))
+        self.region_combo = QComboBox(); self.region_combo.addItems(["variance", "level", "gradient"])
+        self.region_combo.currentIndexChanged.connect(self._reanalyze); r.addWidget(self.region_combo)
+        v.addLayout(r)
         for lbl, key, lo, hi, val, step in [
-            ("expected length (m)", "expected_m", 10, 10000, 150, 10),
+            ("OTDR length (m)", "expected_m", 10, 10000, 150, 10),
             ("sigma × noise", "sigma", 0.5, 6.0, 2.5, 0.1),
             ("break fraction", "break_frac", 0.3, 1.0, 0.85, 0.05),
             ("bend drop (dB)", "bend_drop", 0.1, 5.0, 0.8, 0.1)]:
@@ -386,8 +392,10 @@ class Studio(QMainWindow):
 
     # ── analysis ────────────────────────────────────────────────────────────
     def _params(self):
-        return {k: getattr(self, "p_" + k).value()
-                for k in ("expected_m", "sigma", "break_frac", "bend_drop")}
+        p = {k: getattr(self, "p_" + k).value()
+             for k in ("expected_m", "sigma", "break_frac", "bend_drop")}
+        p["region_method"] = self.region_combo.currentText()
+        return p
 
     def _detector_changed(self, i):
         if self.det_combo.currentText() == "Load custom model…":

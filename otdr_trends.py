@@ -1,10 +1,3 @@
-from __future__ import annotations
-import os
-os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
-import numpy as np
-from scipy.signal import find_peaks
-from otdr_common import parse_otdr_csv, trim_dead_zone
-
 """
 otdr_trends.py — piecewise-linear trend decomposition + event extraction.
 
@@ -31,7 +24,9 @@ correct a handful by hand instead of drawing all of them.
 Depends on: numpy, scipy, matplotlib, and parse_otdr_csv from otdr_common.
 """
 
-
+import numpy as np
+from scipy.signal import find_peaks
+from otdr_common import parse_otdr_csv, trim_dead_zone
 
 
 # --------------------------------------------------------------------------- #
@@ -49,43 +44,77 @@ def _m_to_samples(km, meters):
 
 
 # --------------------------------------------------------------------------- #
-def find_valid_region(km, db, noise_win_m=2.5, std_thr=3.0, slope_thr_db_per_km=60.0):
-    """Return (start_idx, eof_idx): the coherent-backscatter span.
-
-    start = where the launch pulse settles into a flat-slope plateau.
-    eof   = start of the final NOISE FLOOR run. Noise is defined purely by VARIANCE
-            (rolling std > std_thr): the floor swings wildly whether it sits at -50 or
-            oscillates up around -25, while a bend drops the level but stays smooth, so
-            a bend is never mistaken for noise. Density-smoothed + required to reach the
-            window end, so brief mid-fibre spikes (connectors) are ignored."""
+def find_launch_start(km, db, w, slope_thr_db_per_km=60.0):
+    """First flat-slope index after the launch peak (end of the dead-zone)."""
     n = len(db)
-    w = _m_to_samples(km, noise_win_m)
     sm = _smooth(db, w)
-
-    # plateau start: first flat-slope window after the launch peak
     peak = int(np.argmax(sm[:max(1, n // 5)]))
     grad_km = np.abs(np.gradient(sm, km))
-    start = peak + w
     for i in range(peak + 1, max(peak + 2, n - w)):
         if np.all(grad_km[i:i + w] < slope_thr_db_per_km):
-            start = i
-            break
+            return i
+    return min(peak + w, n - 1)
 
-    # noise floor = sustained high-variance region reaching the window end
+
+def _final_run_eof(mask, w, start):
+    """eof = start of the final density-smoothed True run that reaches the window end."""
+    n = len(mask)
+    if not mask.any():
+        return n - 1
+    dens = _smooth(mask.astype(float), 2 * w) > 0.5
+    if dens[-1]:
+        i = n - 1
+        while i > start and dens[i - 1]:
+            i -= 1
+        return i
+    idx = np.where(dens)[0]
+    return int(idx[-1]) if idx.size else n - 1
+
+
+def _noise_variance(km, db, w, start, std_thr=3.0, **_):
+    """Noise = sustained high local variance (floor at -50 OR oscillating high)."""
+    n = len(db)
     rs = np.array([db[max(0, i - w):min(n, i + w + 1)].std() for i in range(n)])
-    noisy = rs > std_thr
-    eof = n - 1
-    if noisy.any():
-        dens = _smooth(noisy.astype(float), 2 * w) > 0.5
-        if dens[-1]:
-            i = n - 1
-            while i > start and dens[i - 1]:
-                i -= 1
-            eof = i
-        else:
-            idx = np.where(dens)[0]
-            if idx.size:
-                eof = int(idx[-1])
+    return _final_run_eof(rs > std_thr, w, start)
+
+
+def _noise_level(km, db, w, start, drop_margin_db=8.0, level_win_m=12.0, **_):
+    """Noise = signal far below the backscatter reference level."""
+    n = len(db)
+    sm = _smooth(db, w)
+    lw = _m_to_samples(km, level_win_m)
+    level_ref = float(np.median(sm[start:min(n, start + lw)]))
+    return _final_run_eof(sm < level_ref - drop_margin_db, w, start)
+
+
+def _noise_gradient(km, db, w, start, **_):
+    """Noise begins at the bottom of the steepest sustained collapse after backscatter."""
+    n = len(db)
+    sm = _smooth(db, w)
+    g = np.gradient(sm, km)
+    gi = start + int(np.argmin(g[start:n]))        # steepest drop (the collapse)
+    i = gi
+    while i < n - 1 and sm[i + 1] <= sm[i]:         # walk to the bottom of the drop
+        i += 1
+    return i
+
+
+REGION_METHODS = {"variance": _noise_variance, "level": _noise_level, "gradient": _noise_gradient}
+
+
+def find_valid_region(km, db, method="variance", noise_win_m=2.5,
+                      slope_thr_db_per_km=60.0, **kw):
+    """(start, eof) of the coherent-backscatter span.
+
+    `method` selects the noise-onset rule:
+        'variance' (default) — sustained high local variance
+        'level'              — signal far below the backscatter level
+        'gradient'           — bottom of the steepest collapse
+    Launch-start detection (plateau after the pulse) is shared by all methods."""
+    w = _m_to_samples(km, noise_win_m)
+    start = find_launch_start(km, db, w, slope_thr_db_per_km)
+    fn = REGION_METHODS.get(method, _noise_variance)
+    eof = fn(km, db, w, start, **kw)
     return start, max(start + 1, eof)
 
 
@@ -164,10 +193,10 @@ def classify_events(km, db, breakpoints, refl_set, eof, sm,
 
 
 # --------------------------------------------------------------------------- #
-def analyze_trends(km, db, expected_length_m=None,
+def analyze_trends(km, db, expected_length_m=None, region_method="variance",
                    loss_thr_db=0.5, reflect_thr_db=3.0, win_m=1.5):
     """Full decomposition of one (km, dB) trace."""
-    start, eof = find_valid_region(km, db)
+    start, eof = find_valid_region(km, db, method=region_method)
     bps, refl_set, sm = detect_breakpoints(km, db, start, eof,
                                            win_m=win_m, loss_thr_db=loss_thr_db,
                                            reflect_thr_db=reflect_thr_db)

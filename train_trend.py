@@ -33,7 +33,8 @@ from otdr_cluster import trace_features, FEAT_COLS
 ROOT       = r"C:\Users\PCA\Desktop\OTDR_CLassification\Dataset"
 MODEL_PATH = r"C:\Users\PCA\Desktop\OTDR_CLassification\trend_clf.joblib"
 TREE_PNG   = r"C:\Users\PCA\Desktop\OTDR_CLassification\trend_tree.png"
-EXPECTED_M = 125.0          # empirical fibre length (normal traces end here). Tune to your cable.
+EXPECTED_M = 125.0          # OTDR / fibre length (normal traces end here). Set to your cable.
+REGION_METHOD = "variance"  # noise-onset rule: variance | level | gradient
 NAMES      = {1: "normal", 2: "bend", 3: "break"}
 LABELS     = [1, 2, 3]
 TARGET     = [NAMES[i] for i in LABELS]
@@ -47,7 +48,7 @@ def build_dataset():
         if lab is None:
             continue
         try:
-            out = analyze_file(fp, expected_length_m=EXPECTED_M)
+            out = analyze_file(fp, expected_length_m=EXPECTED_M, region_method=REGION_METHOD)
             f = trace_features(out, EXPECTED_M)
         except Exception as e:
             print(f"[skip] {os.path.basename(fp)}: {e}")
