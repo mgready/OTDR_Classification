@@ -1,0 +1,519 @@
+#!/usr/bin/env python3
+"""
+otdr_studio.py — integrated OTDR trend viewer / annotator.
+
+Sits on top of otdr_common.py, otdr_trends.py, otdr_channel.py (keep them beside this).
+
+Features
+--------
+* Load a folder of CSVs, navigate Prev/Next, filter.
+* Smoothing: None / Moving average / Savitzky-Golay / Median / Gaussian + window.
+* Pluggable trend DETECTORS (registry): "Regression Channel", "Piecewise Linear",
+  plus "Load custom model…" — any .py exposing
+      detect(km, db, db_s, ignore_zones_m, params) -> result dict
+* Ignore zones: drag on the plot to exclude a span from the trend fit (launch
+  dead-zone, bad sections). Listed + removable.
+* Annotation / mask tool: click to drop labelled points (segment boundary, bend,
+  break, connector). Export per-file JSON masks for ML training of the trends.
+* Zoom / pan via the Matplotlib toolbar; "Fit valid region" button.
+
+Install:  pip install PyQt5 matplotlib numpy scipy
+Run:      python otdr_studio.py
+"""
+
+import os, sys, glob, json, importlib.util
+import numpy as np
+
+from scipy.signal import savgol_filter, medfilt, find_peaks
+from scipy.ndimage import gaussian_filter1d
+from scipy.stats import theilslopes
+
+from PyQt5.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
+    QPushButton, QLabel, QSlider, QComboBox, QGroupBox, QScrollArea, QLineEdit,
+    QListWidget, QListWidgetItem, QFileDialog, QStatusBar, QDoubleSpinBox,
+    QSizePolicy, QMessageBox,
+)
+from PyQt5.QtCore import Qt
+
+import matplotlib
+matplotlib.use("Qt5Agg")
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
+from matplotlib.figure import Figure
+
+# our modules
+from otdr_common import parse_otdr_csv, trim_dead_zone
+from otdr_trends import find_valid_region, _m_to_samples
+from otdr_channel import mad_std, _sustained_step
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  SMOOTHING
+# ════════════════════════════════════════════════════════════════════════════
+def _odd(n):
+    n = int(n)
+    return n if n % 2 == 1 else n + 1
+
+
+def apply_smoothing(db, method, window):
+    if method == "None" or window < 3:
+        return db.astype(float)
+    if method == "Moving average":
+        w = _odd(window)
+        return np.convolve(db, np.ones(w) / w, mode="same")
+    if method == "Savitzky-Golay":
+        w = _odd(min(window, len(db) - 1))
+        return savgol_filter(db, window_length=max(5, w), polyorder=3, mode="interp")
+    if method == "Median":
+        return medfilt(db, kernel_size=_odd(window))
+    if method == "Gaussian":
+        return gaussian_filter1d(db, sigma=max(1.0, window / 6.0))
+    return db.astype(float)
+
+
+SMOOTHERS = ["None", "Moving average", "Savitzky-Golay", "Median", "Gaussian"]
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  DETECTORS  (pluggable)
+#  Each returns:
+#    {"trends":[(x_m, y, color, label)], "channel":(x_m, up, lo) or None,
+#     "events":[{"m":, "type":, "loss_dB":}], "verdict": str, "region":(s_m,e_m)}
+# ════════════════════════════════════════════════════════════════════════════
+def _ignore_mask(km, zones_m):
+    ig = np.zeros(len(km), bool)
+    for a, b in zones_m:
+        lo, hi = sorted((a, b))
+        ig |= (km * 1000.0 >= lo) & (km * 1000.0 <= hi)
+    return ig
+
+
+def detect_regression_channel(km, db, db_s, zones_m, params):
+    sigma = params.get("sigma", 2.5)
+    exp_m = params.get("expected_m", 150.0)
+    break_frac = params.get("break_frac", 0.85)
+    bend_drop = params.get("bend_drop", 0.8)
+
+    start, eof = find_valid_region(km, db)
+    ig = _ignore_mask(km, zones_m)
+    x = km[start:eof]
+    ys = db_s[start:eof]
+    igr = ig[start:eof]
+    fx, fy = (x[~igr], ys[~igr]) if (~igr).sum() > 10 else (x, ys)
+
+    slope, intercept, _, _ = theilslopes(fy, fx)
+    trend = slope * x + intercept
+    resid = ys - trend
+    base = resid[~igr] if (~igr).any() else resid
+    thr = sigma * mad_std(base)
+
+    valid_len = (km[eof] - km[start]) * 1000.0
+    valid_frac = valid_len / exp_m if exp_m else 1.0
+    step_i, step_drop = _sustained_step(ys, _m_to_samples(km, 3.0))
+    step_m = float(x[step_i] * 1000.0)
+
+    if valid_frac < break_frac:
+        cls, name, ev = 3, "break", km[eof] * 1000.0
+        why = f"trend ends at {valid_len:.0f} m ({valid_frac*100:.0f}%)"
+    elif step_drop > bend_drop:
+        cls, name, ev = 2, "bend", step_m
+        why = f"{step_drop:.1f} dB step at {step_m:.0f} m"
+    else:
+        cls, name, ev = 1, "normal", None
+        why = "clean trend to expected length"
+
+    events = [] if ev is None else [{"m": float(ev), "type": name, "loss_dB": round(step_drop, 2)}]
+    return {
+        "trends": [(x * 1000.0, trend, "#D32F2F", f"trend {slope:.3f} dB/km")],
+        "channel": (x * 1000.0, trend + thr, trend - thr),
+        "events": events,
+        "verdict": f"CLASS {cls}: {name.upper()}  ({why})",
+        "region": (km[start] * 1000.0, km[eof] * 1000.0),
+        "features": {"slope_dB_per_km": round(float(slope), 3),
+                     "valid_fraction": round(valid_frac, 3),
+                     "step_drop_dB": round(step_drop, 2),
+                     "channel_halfwidth_dB": round(thr, 3)},
+    }
+
+
+def detect_piecewise(km, db, db_s, zones_m, params):
+    from otdr_trends import analyze_trends
+    out = analyze_trends(km, db, expected_length_m=params.get("expected_m", 150.0))
+    trends = []
+    for s in out["segments"]:
+        xs = km[s["i0"]:s["i1"]] * 1000.0
+        ys = s["slope_dB_per_km"] * km[s["i0"]:s["i1"]] + s["intercept"]
+        trends.append((xs, ys, "#D32F2F", f"{s['slope_dB_per_km']:.2f} dB/km"))
+    ig = _ignore_mask(km, zones_m)
+    events = [e for e in out["events"]
+              if not ig[int(np.argmin(np.abs(km * 1000.0 - e["m"])))]]
+    return {"trends": trends, "channel": None, "events": events,
+            "verdict": f"{len(out['segments'])} segments, {len(events)} events",
+            "region": (km[out['start']] * 1000.0, km[out['eof']] * 1000.0),
+            "features": {}}
+
+
+DETECTORS = {
+    "Regression Channel": detect_regression_channel,
+    "Piecewise Linear": detect_piecewise,
+}
+
+
+def load_custom_detector(path):
+    spec = importlib.util.spec_from_file_location("custom_detector", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    if not hasattr(mod, "detect"):
+        raise AttributeError("custom model file must define detect(km, db, db_s, zones_m, params)")
+    return mod.detect
+
+
+# annotation label types -> colour
+ANNO_TYPES = {
+    "segment_break": "#1565C0",
+    "bend": "#FF9800",
+    "break": "#C2185B",
+    "connector": "#2E7D32",
+    "noise_start": "#455A64",
+}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  CANVAS
+# ════════════════════════════════════════════════════════════════════════════
+class Canvas(FigureCanvas):
+    def __init__(self):
+        self.fig = Figure(figsize=(11, 6))
+        super().__init__(self.fig)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.ax = self.fig.add_subplot(111)
+        self._placeholder()
+
+    def _placeholder(self):
+        self.ax.clear()
+        self.ax.text(0.5, 0.5, "Load a folder of OTDR CSVs to begin",
+                     ha="center", va="center", color="#999",
+                     transform=self.ax.transAxes, fontsize=13)
+        self.ax.axis("off")
+        self.draw()
+
+    def render(self, km, db, db_s, result, zones_m, annotations, title):
+        ax = self.ax
+        xlim = ax.get_xlim() if ax.has_data() else None
+        ax.clear()
+        m = km * 1000.0
+        ax.plot(m, db, lw=0.7, color="#9DB8D2", alpha=0.7, label="raw")
+        ax.plot(m, db_s, lw=1.2, color="#1f3a5f", label="smoothed")
+
+        if result:
+            s_m, e_m = result["region"]
+            if s_m > m[0]:
+                ax.axvspan(m[0], s_m, color="purple", alpha=0.06)
+            if e_m < m[-1]:
+                ax.axvspan(e_m, m[-1], color="brown", alpha=0.06)
+            for (xs, ys, c, lab) in result["trends"]:
+                ax.plot(xs, ys, lw=2.4, ls="--", color=c, label=lab)
+            if result["channel"]:
+                xs, up, lo = result["channel"]
+                ax.plot(xs, up, lw=1.8, color="#E69138")
+                ax.plot(xs, lo, lw=1.8, color="#2E7D32")
+            for e in result["events"]:
+                ax.axvline(e["m"], color="black", ls=":", lw=1.6)
+                ax.annotate(f"{e['type']}\n{e['m']:.0f} m", xy=(e["m"], ax.get_ylim()[1]),
+                            ha="center", va="top", fontsize=8,
+                            bbox=dict(boxstyle="round,pad=0.2", fc="white", alpha=0.8))
+
+        for a, b in zones_m:
+            ax.axvspan(min(a, b), max(a, b), color="gray", alpha=0.25)
+
+        for p in annotations:
+            ax.scatter([p["m"]], [p["db"]], s=70, marker="o", zorder=9,
+                       color=ANNO_TYPES.get(p["type"], "black"),
+                       edgecolors="black", linewidths=0.7)
+
+        ax.set_xlabel("distance (m)"); ax.set_ylabel("dB")
+        ax.set_title(title, fontsize=10)
+        ax.grid(alpha=0.3); ax.legend(loc="upper right", fontsize=8)
+        if xlim and abs(xlim[1] - xlim[0]) > 1:    # keep zoom across replots
+            ax.set_xlim(xlim)
+        self.fig.tight_layout()
+        self.draw()
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  MAIN WINDOW
+# ════════════════════════════════════════════════════════════════════════════
+class Studio(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("OTDR Studio — trend viewer & annotator")
+        self.resize(1500, 880)
+        self.files, self.idx = [], -1
+        self.km = self.db = self.db_s = None
+        self.zones, self.annos, self.result = [], [], None
+        self.mode = "normal"             # normal | ignore | annotate
+        self._press_x = None
+        self._build()
+
+    # ── UI ──────────────────────────────────────────────────────────────────
+    def _build(self):
+        central = QWidget(); self.setCentralWidget(central)
+        root = QHBoxLayout(central)
+
+        left = QScrollArea(); left.setWidgetResizable(True); left.setFixedWidth(310)
+        panel = QWidget(); left.setWidget(panel)
+        L = QVBoxLayout(panel); L.setSpacing(8)
+
+        # files
+        g = QGroupBox("Data"); v = QVBoxLayout(g)
+        b = QPushButton("Open folder…"); b.clicked.connect(self._open_folder); v.addWidget(b)
+        self.search = QLineEdit(); self.search.setPlaceholderText("filter…")
+        self.search.textChanged.connect(self._filter); v.addWidget(self.search)
+        self.flist = QListWidget(); self.flist.setFixedHeight(180)
+        self.flist.currentRowChanged.connect(self._pick); v.addWidget(self.flist)
+        nav = QHBoxLayout()
+        for t, f in [("‹ Prev", self._prev), ("Next ›", self._next)]:
+            bb = QPushButton(t); bb.clicked.connect(f); nav.addWidget(bb)
+        v.addLayout(nav); L.addWidget(g)
+
+        # smoothing
+        g = QGroupBox("Smoothing"); v = QVBoxLayout(g)
+        self.smooth_combo = QComboBox(); self.smooth_combo.addItems(SMOOTHERS)
+        self.smooth_combo.currentIndexChanged.connect(self._reanalyze); v.addWidget(self.smooth_combo)
+        r = QHBoxLayout(); r.addWidget(QLabel("window"))
+        self.win = QSlider(Qt.Horizontal); self.win.setRange(3, 99); self.win.setValue(15)
+        self.win.valueChanged.connect(self._reanalyze); r.addWidget(self.win)
+        self.win_lbl = QLabel("15"); r.addWidget(self.win_lbl); v.addLayout(r); L.addWidget(g)
+
+        # detector
+        g = QGroupBox("Trend detector"); v = QVBoxLayout(g)
+        self.det_combo = QComboBox(); self.det_combo.addItems(list(DETECTORS) + ["Load custom model…"])
+        self.det_combo.currentIndexChanged.connect(self._detector_changed); v.addWidget(self.det_combo)
+        for lbl, key, lo, hi, val, step in [
+            ("expected length (m)", "expected_m", 10, 10000, 150, 10),
+            ("sigma × noise", "sigma", 0.5, 6.0, 2.5, 0.1),
+            ("break fraction", "break_frac", 0.3, 1.0, 0.85, 0.05),
+            ("bend drop (dB)", "bend_drop", 0.1, 5.0, 0.8, 0.1)]:
+            r = QHBoxLayout(); r.addWidget(QLabel(lbl))
+            sp = QDoubleSpinBox(); sp.setRange(lo, hi); sp.setSingleStep(step); sp.setValue(val)
+            sp.setDecimals(2 if step < 1 else 0)
+            sp.valueChanged.connect(self._reanalyze)
+            setattr(self, "p_" + key, sp); r.addWidget(sp); v.addLayout(r)
+        b = QPushButton("Detect trends"); b.clicked.connect(self._reanalyze); v.addWidget(b)
+        self.verdict = QLabel("—"); self.verdict.setWordWrap(True)
+        self.verdict.setStyleSheet("font-weight:bold;color:#1565C0;"); v.addWidget(self.verdict)
+        self.feat_lbl = QLabel(""); self.feat_lbl.setWordWrap(True)
+        self.feat_lbl.setStyleSheet("color:#555;font-size:10px;"); v.addWidget(self.feat_lbl)
+        L.addWidget(g)
+
+        # ignore zones
+        g = QGroupBox("Ignore zones"); v = QVBoxLayout(g)
+        self.ignore_btn = QPushButton("Add zone (drag on plot)")
+        self.ignore_btn.setCheckable(True)
+        self.ignore_btn.clicked.connect(lambda c: self._set_mode("ignore" if c else "normal"))
+        v.addWidget(self.ignore_btn)
+        self.zone_list = QListWidget(); self.zone_list.setFixedHeight(80); v.addWidget(self.zone_list)
+        b = QPushButton("Remove selected zone"); b.clicked.connect(self._rm_zone); v.addWidget(b)
+        L.addWidget(g)
+
+        # annotation
+        g = QGroupBox("Annotation (ML mask)"); v = QVBoxLayout(g)
+        self.anno_btn = QPushButton("Annotate (click on plot)")
+        self.anno_btn.setCheckable(True)
+        self.anno_btn.clicked.connect(lambda c: self._set_mode("annotate" if c else "normal"))
+        v.addWidget(self.anno_btn)
+        self.anno_type = QComboBox(); self.anno_type.addItems(list(ANNO_TYPES)); v.addWidget(self.anno_type)
+        self.anno_list = QListWidget(); self.anno_list.setFixedHeight(90); v.addWidget(self.anno_list)
+        b = QPushButton("Remove selected point"); b.clicked.connect(self._rm_anno); v.addWidget(b)
+        r = QHBoxLayout()
+        for t, f in [("Save mask", self._save_mask), ("Load mask", self._load_mask)]:
+            bb = QPushButton(t); bb.clicked.connect(f); r.addWidget(bb)
+        v.addLayout(r); L.addWidget(g)
+
+        b = QPushButton("Fit valid region"); b.clicked.connect(self._fit_view); L.addWidget(b)
+        L.addStretch()
+
+        # right
+        right = QWidget(); rl = QVBoxLayout(right)
+        self.canvas = Canvas(); self.toolbar = NavigationToolbar(self.canvas, right)
+        rl.addWidget(self.toolbar); rl.addWidget(self.canvas, 1)
+        self.canvas.mpl_connect("button_press_event", self._on_press)
+        self.canvas.mpl_connect("button_release_event", self._on_release)
+
+        root.addWidget(left); root.addWidget(right, 1)
+        self.setStatusBar(QStatusBar()); self.statusBar().showMessage("Open a folder to begin.")
+        self.win.valueChanged.connect(lambda v: self.win_lbl.setText(str(v)))
+
+    # ── files ───────────────────────────────────────────────────────────────
+    def _open_folder(self):
+        d = QFileDialog.getExistingDirectory(self, "Choose folder of CSVs")
+        if not d:
+            return
+        self.files = sorted(glob.glob(os.path.join(d, "*.csv")))
+        self.flist.clear()
+        for f in self.files:
+            self.flist.addItem(os.path.basename(f))
+        self.statusBar().showMessage(f"{len(self.files)} files in {d}")
+        if self.files:
+            self.flist.setCurrentRow(0)
+
+    def _filter(self, t):
+        for i in range(self.flist.count()):
+            self.flist.item(i).setHidden(t.lower() not in self.flist.item(i).text().lower())
+
+    def _pick(self, row):
+        if row < 0 or row >= len(self.files):
+            return
+        self.idx = row
+        try:
+            km, db, _ = parse_otdr_csv(self.files[row])
+            km, db = trim_dead_zone(km, db)
+            self.km, self.db = km, db
+            self.zones, self.annos = [], []
+            self.zone_list.clear(); self.anno_list.clear()
+            self._reanalyze()
+        except Exception as e:
+            QMessageBox.warning(self, "Load error", str(e))
+
+    def _prev(self):
+        if self.idx > 0:
+            self.flist.setCurrentRow(self.idx - 1)
+
+    def _next(self):
+        if 0 <= self.idx < len(self.files) - 1:
+            self.flist.setCurrentRow(self.idx + 1)
+
+    # ── analysis ────────────────────────────────────────────────────────────
+    def _params(self):
+        return {k: getattr(self, "p_" + k).value()
+                for k in ("expected_m", "sigma", "break_frac", "bend_drop")}
+
+    def _detector_changed(self, i):
+        if self.det_combo.currentText() == "Load custom model…":
+            path, _ = QFileDialog.getOpenFileName(self, "Custom detector .py", "", "Python (*.py)")
+            if path:
+                try:
+                    name = os.path.basename(path)
+                    DETECTORS[name] = load_custom_detector(path)
+                    self.det_combo.blockSignals(True)
+                    self.det_combo.insertItem(self.det_combo.count() - 1, name)
+                    self.det_combo.setCurrentText(name)
+                    self.det_combo.blockSignals(False)
+                except Exception as e:
+                    QMessageBox.warning(self, "Custom model", str(e))
+                    self.det_combo.setCurrentIndex(0)
+        self._reanalyze()
+
+    def _reanalyze(self, *_):
+        if self.km is None:
+            return
+        self.db_s = apply_smoothing(self.db, self.smooth_combo.currentText(), self.win.value())
+        name = self.det_combo.currentText()
+        fn = DETECTORS.get(name)
+        if fn is None:
+            self._draw(); return
+        try:
+            self.result = fn(self.km, self.db, self.db_s, self.zones, self._params())
+            self.verdict.setText(self.result["verdict"])
+            self.feat_lbl.setText("  ".join(f"{k}={v}" for k, v in self.result.get("features", {}).items()))
+        except Exception as e:
+            self.result = None
+            self.verdict.setText(f"detector error: {e}")
+        self._draw()
+
+    def _draw(self):
+        if self.km is None:
+            return
+        title = os.path.basename(self.files[self.idx]) if 0 <= self.idx < len(self.files) else ""
+        self.canvas.render(self.km, self.db, self.db_s, self.result,
+                           self.zones, self.annos, title)
+
+    def _fit_view(self):
+        if self.result:
+            s, e = self.result["region"]
+            self.canvas.ax.set_xlim(s - 5, e + 5); self.canvas.draw()
+
+    # ── modes / mouse ───────────────────────────────────────────────────────
+    def _set_mode(self, mode):
+        self.mode = mode
+        if mode != "ignore":
+            self.ignore_btn.setChecked(False)
+        if mode != "annotate":
+            self.anno_btn.setChecked(False)
+        self.statusBar().showMessage({"ignore": "Drag on the plot to add an ignore zone.",
+                                      "annotate": "Click on the plot to drop a labelled point.",
+                                      "normal": "Pan/zoom with the toolbar."}[mode])
+
+    def _on_press(self, ev):
+        if ev.inaxes is None or self.km is None:
+            return
+        if self.mode == "ignore":
+            self._press_x = ev.xdata
+        elif self.mode == "annotate":
+            m = ev.xdata
+            i = int(np.argmin(np.abs(self.km * 1000.0 - m)))
+            db_val = float(self.db_s[i]) if self.db_s is not None else float(self.db[i])
+            t = self.anno_type.currentText()
+            self.annos.append({"m": round(float(self.km[i] * 1000.0), 2), "db": round(db_val, 2), "type": t})
+            self.anno_list.addItem(f"{t} @ {self.km[i]*1000:.1f} m")
+            self._draw()
+
+    def _on_release(self, ev):
+        if self.mode == "ignore" and self._press_x is not None and ev.inaxes is not None:
+            a, b = self._press_x, ev.xdata
+            if abs(b - a) > 1:
+                self.zones.append([round(min(a, b), 1), round(max(a, b), 1)])
+                self.zone_list.addItem(f"{min(a,b):.1f} – {max(a,b):.1f} m")
+                self._reanalyze()
+            self._press_x = None
+
+    def _rm_zone(self):
+        r = self.zone_list.currentRow()
+        if r >= 0:
+            self.zones.pop(r); self.zone_list.takeItem(r); self._reanalyze()
+
+    def _rm_anno(self):
+        r = self.anno_list.currentRow()
+        if r >= 0:
+            self.annos.pop(r); self.anno_list.takeItem(r); self._draw()
+
+    # ── mask I/O ────────────────────────────────────────────────────────────
+    def _save_mask(self):
+        if self.idx < 0:
+            return
+        default = os.path.splitext(self.files[self.idx])[0] + ".mask.json"
+        path, _ = QFileDialog.getSaveFileName(self, "Save mask", default, "JSON (*.json)")
+        if not path:
+            return
+        data = {"file": os.path.basename(self.files[self.idx]),
+                "expected_length_m": self.p_expected_m.value(),
+                "ignore_zones_m": self.zones, "annotations": self.annos}
+        with open(path, "w") as f:
+            json.dump(data, f, indent=2)
+        self.statusBar().showMessage(f"saved {path}")
+
+    def _load_mask(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Load mask", "", "JSON (*.json)")
+        if not path:
+            return
+        data = json.load(open(path))
+        self.zones = data.get("ignore_zones_m", [])
+        self.annos = data.get("annotations", [])
+        self.zone_list.clear(); self.anno_list.clear()
+        for a, b in self.zones:
+            self.zone_list.addItem(f"{a:.1f} – {b:.1f} m")
+        for p in self.annos:
+            self.anno_list.addItem(f"{p['type']} @ {p['m']:.1f} m")
+        self._reanalyze()
+
+
+def main():
+    app = QApplication(sys.argv)
+    app.setStyle("Fusion")
+    w = Studio(); w.show()
+    sys.exit(app.exec_())
+
+
+if __name__ == "__main__":
+    main()
