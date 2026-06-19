@@ -193,9 +193,34 @@ def classify_events(km, db, breakpoints, refl_set, eof, sm,
 
 
 # --------------------------------------------------------------------------- #
+def merge_events(events, merge_m=12.0):
+    """Collapse runs of the SAME-type events within merge_m metres into one event.
+    A continuous bend region becomes a single bend (loss accumulated) instead of many."""
+    if not events:
+        return events
+    ev = sorted(events, key=lambda e: e["m"])
+    out = [dict(ev[0])]
+    for e in ev[1:]:
+        last = out[-1]
+        if e["type"] == last["type"] and (e["m"] - last["m"]) <= merge_m:
+            last["loss_dB"] = round(float(last.get("loss_dB", 0.0)) + float(e.get("loss_dB", 0.0)), 2)
+            last["reflectance_dB"] = round(max(float(last.get("reflectance_dB", 0.0)),
+                                               float(e.get("reflectance_dB", 0.0))), 2)
+        else:
+            out.append(dict(e))
+    return out
+
+
 def analyze_trends(km, db, expected_length_m=None, region_method="variance",
-                   loss_thr_db=0.5, reflect_thr_db=3.0, win_m=1.5):
-    """Full decomposition of one (km, dB) trace."""
+                   loss_thr_db=0.5, reflect_thr_db=3.0, win_m=1.5,
+                   end_frac=0.90, merge_m=12.0, snap_end=True, snap_tol=0.12):
+    """Full decomposition of one (km, dB) trace.
+
+    - merge_m : consecutive same-type events within this many metres collapse into one,
+                so a continuous bend reads as ONE bend instead of 7-12.
+    - terminal: labelled 'break' if it ends before end_frac of the typed length; if it
+                ends NEAR the typed length (within snap_tol) it is the normal 'end',
+                reported at the nominal length for a consistent, deterministic marker."""
     start, eof = find_valid_region(km, db, method=region_method)
     bps, refl_set, sm = detect_breakpoints(km, db, start, eof,
                                            win_m=win_m, loss_thr_db=loss_thr_db,
@@ -203,6 +228,25 @@ def analyze_trends(km, db, expected_length_m=None, region_method="variance",
     segs = fit_trends(km, db, bps, start, eof)
     events = classify_events(km, db, bps, refl_set, eof, sm,
                              win_m=win_m, expected_length_m=expected_length_m)
+    events = merge_events(events, merge_m=merge_m)
+
+    # terminal: anchor to the END REFLECTION (the last strong reflection before the noise)
+    # so the Fresnel end-spike is ALWAYS the terminus, never a stray connector. This is what
+    # keeps near-identical traces from flipping between 'connector' and 'end'.
+    if expected_length_m:
+        near_end = [i for i in refl_set if i < eof and (km[eof] - km[i]) < 0.020]
+        term_idx = max(near_end) if near_end else eof
+        term_m = float(km[term_idx] * 1000.0)
+        events = [e for e in events if abs(e["m"] - term_m) > 5.0]   # end spike is terminus, not connector
+        if abs(term_m - expected_length_m) <= snap_tol * expected_length_m:
+            pos, ttype = (expected_length_m if snap_end else term_m), "end"
+        elif term_m < expected_length_m * end_frac:
+            pos, ttype = term_m, "break"
+        else:
+            pos, ttype = term_m, "end"
+        events.append({"km": pos / 1000.0, "m": pos, "type": ttype,
+                       "loss_dB": 0.0, "reflectance_dB": 0.0})
+
     return {"km": km, "db": db, "smooth": sm,
             "start": start, "eof": eof,
             "segments": segs, "events": events}
