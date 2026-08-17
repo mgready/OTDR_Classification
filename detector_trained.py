@@ -13,7 +13,7 @@ import joblib
 from otdr_trends import analyze_trends
 from otdr_cluster import trace_features
 
-MODEL_PATH = r"C:\Users\PCA\Desktop\OTDR_CLassification\trend_clf.joblib"
+MODEL_PATH = r"C:\Users\Magzhan\OTDR_Classification\OTDR_Classification\trend_clf.joblib"
 _BUNDLE = None
 
 

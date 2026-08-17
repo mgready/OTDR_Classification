@@ -255,6 +255,8 @@ class Studio(QMainWindow):
         self.files, self.idx = [], -1
         self.km = self.db = self.db_s = None
         self.zones, self.annos, self.result = [], [], None
+        self.gt_class = "normal"        # <-- ДОБАВИТЬ
+        self.gt_length_m = None         # <-- ДОБАВИТЬ
         self.mode = "normal"             # normal | ignore | annotate
         self._press_x = None
         self._build()
@@ -326,7 +328,26 @@ class Studio(QMainWindow):
 
         # annotation
         g = QGroupBox("Annotation (ML mask)"); v = QVBoxLayout(g)
+
+        # ---- НОВОЕ: ground-truth класс трассы целиком ----
+        r0 = QHBoxLayout(); r0.addWidget(QLabel("GT class (whole trace)"))
+        self.gt_combo = QComboBox()
+        self.gt_combo.addItems(["normal", "bend", "connector", "break"])
+        self.gt_combo.currentTextChanged.connect(self._on_gt_changed)
+        r0.addWidget(self.gt_combo)
+        v.addLayout(r0)
+
+        r1 = QHBoxLayout(); r1.addWidget(QLabel("trace length (m)"))
+        self.gt_len_spin = QDoubleSpinBox()
+        self.gt_len_spin.setRange(0, 200000)
+        self.gt_len_spin.setDecimals(1)
+        self.gt_len_spin.valueChanged.connect(self._on_gt_len_changed)
+        r1.addWidget(self.gt_len_spin)
+        v.addLayout(r1)
+        # ---- конец нового блока ----
+
         self.anno_btn = QPushButton("Annotate (click on plot)")
+        
         self.anno_btn.setCheckable(True)
         self.anno_btn.clicked.connect(lambda c: self._set_mode("annotate" if c else "normal"))
         v.addWidget(self.anno_btn)
@@ -379,6 +400,35 @@ class Studio(QMainWindow):
             self.km, self.db = km, db
             self.zones, self.annos = [], []
             self.zone_list.clear(); self.anno_list.clear()
+
+
+            self.gt_class = "normal"
+            self.gt_combo.blockSignals(True)
+            self.gt_combo.setCurrentText("normal")
+            self.gt_combo.blockSignals(False)
+
+            self.gt_length_m = float(km[-1] * 1000.0)
+            self.gt_len_spin.blockSignals(True)
+            self.gt_len_spin.setValue(self.gt_length_m)
+            self.gt_len_spin.blockSignals(False)
+
+            
+            auto_mask = os.path.splitext(self.files[row])[0] + ".mask.json"
+            if os.path.exists(auto_mask):
+                try:
+                    d = json.load(open(auto_mask))
+                    self.gt_class = d.get("gt_class", self.gt_class)
+                    self.gt_length_m = d.get("gt_length_m", self.gt_length_m)
+                    self.zones = d.get("ignore_zones_m", [])
+                    self.annos = d.get("annotations", [])
+                    self.gt_combo.blockSignals(True); self.gt_combo.setCurrentText(self.gt_class); self.gt_combo.blockSignals(False)
+                    self.gt_len_spin.blockSignals(True); self.gt_len_spin.setValue(self.gt_length_m); self.gt_len_spin.blockSignals(False)
+                    for a, b in self.zones:
+                        self.zone_list.addItem(f"{a:.1f} - {b:.1f} m")
+                    for p in self.annos:
+                        self.anno_list.addItem(f"{p['type']} @ {p['m']:.1f} m")
+                except Exception:
+                    pass
             self._reanalyze()
         except Exception as e:
             QMessageBox.warning(self, "Load error", str(e))
@@ -476,6 +526,12 @@ class Studio(QMainWindow):
                 self.zone_list.addItem(f"{min(a,b):.1f} – {max(a,b):.1f} m")
                 self._reanalyze()
             self._press_x = None
+            
+    def _on_gt_changed(self, text):
+        self.gt_class = text
+
+    def _on_gt_len_changed(self, val):
+        self.gt_length_m = val
 
     def _rm_zone(self):
         r = self.zone_list.currentRow()
@@ -495,9 +551,14 @@ class Studio(QMainWindow):
         path, _ = QFileDialog.getSaveFileName(self, "Save mask", default, "JSON (*.json)")
         if not path:
             return
-        data = {"file": os.path.basename(self.files[self.idx]),
-                "expected_length_m": self.p_expected_m.value(),
-                "ignore_zones_m": self.zones, "annotations": self.annos}
+        data = {
+            "file": os.path.basename(self.files[self.idx]),
+            "expected_length_m": self.p_expected_m.value(),
+            "gt_class": self.gt_class,                 # <-- НОВОЕ: лейбл человека
+            "gt_length_m": self.gt_length_m,            # <-- НОВОЕ: длина трассы
+            "ignore_zones_m": self.zones,
+            "annotations": self.annos,
+        }
         with open(path, "w") as f:
             json.dump(data, f, indent=2)
         self.statusBar().showMessage(f"saved {path}")
@@ -509,9 +570,14 @@ class Studio(QMainWindow):
         data = json.load(open(path))
         self.zones = data.get("ignore_zones_m", [])
         self.annos = data.get("annotations", [])
+        self.gt_class = data.get("gt_class", "normal")          # <-- НОВОЕ
+        self.gt_length_m = data.get("gt_length_m", None)         # <-- НОВОЕ
+        self.gt_combo.blockSignals(True); self.gt_combo.setCurrentText(self.gt_class); self.gt_combo.blockSignals(False)
+        if self.gt_length_m is not None:
+            self.gt_len_spin.blockSignals(True); self.gt_len_spin.setValue(self.gt_length_m); self.gt_len_spin.blockSignals(False)
         self.zone_list.clear(); self.anno_list.clear()
         for a, b in self.zones:
-            self.zone_list.addItem(f"{a:.1f} – {b:.1f} m")
+            self.zone_list.addItem(f"{a:.1f} - {b:.1f} m")
         for p in self.annos:
             self.anno_list.addItem(f"{p['type']} @ {p['m']:.1f} m")
         self._reanalyze()
