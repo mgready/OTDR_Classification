@@ -1,0 +1,14 @@
+{
+  "file": "2026_04_27_14_24_50.csv",
+  "expected_length_m": 150.0,
+  "gt_class": "normal",
+  "gt_length_m": 199.737,
+  "ignore_zones_m": [],
+  "annotations": [
+    {
+      "m": 125.07,
+      "db": -14.77,
+      "type": "break"
+    }
+  ]
+}

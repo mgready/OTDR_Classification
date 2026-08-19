@@ -1,0 +1,78 @@
+N samples: 59
+Accuracy: 0.2542
+Macro    precision/recall/F1: 0.3517 / 0.4354 / 0.2848
+Weighted precision/recall/F1: 0.3016 / 0.2542 / 0.2289
+
+Per-class:
+    class  precision   recall       f1  support
+     bend   0.454545 0.357143 0.400000       14
+    break   0.119048 1.000000 0.212766        5
+connector   0.000000 0.000000 0.000000       27
+   normal   0.833333 0.384615 0.526316       13
+
+Confusion matrix (rows=true, cols=pred):
+                pred_bend  pred_break  pred_connector  pred_normal
+true_bend               5           9               0            0
+true_break              0           5               0            0
+true_connector          4          22               0            1
+true_normal             2           6               0            5
+
+sklearn classification_report:
+              precision    recall  f1-score   support
+
+        bend       0.45      0.36      0.40        14
+       break       0.12      1.00      0.21         5
+   connector       0.00      0.00      0.00        27
+      normal       0.83      0.38      0.53        13
+
+    accuracy                           0.25        59
+   macro avg       0.35      0.44      0.28        59
+weighted avg       0.30      0.25      0.23        59
+
+
+Misclassified files:
+                           file  gt_class pred_class                verdict
+        2026_04_27_14_23_25.csv    normal       bend   CLASS 2: BEND  (61%)
+        2026_04_27_14_27_51.csv    normal       bend   CLASS 2: BEND  (62%)
+24_04_2026_15_31_12.csvyjно.csv    normal      break  CLASS 3: BREAK  (98%)
+ 24_04_202_15_31_12.csvyjно.csv    normal      break  CLASS 3: BREAK  (69%)
+ class4_2026_06_19_15_12_31.csv connector      break  CLASS 3: BREAK  (73%)
+ class4_2026_06_19_15_12_37.csv connector      break  CLASS 3: BREAK  (54%)
+ class4_2026_06_19_15_12_48.csv connector      break  CLASS 3: BREAK  (77%)
+ class4_2026_06_19_15_12_56.csv connector      break  CLASS 3: BREAK  (73%)
+ class4_2026_06_19_15_13_04.csv connector       bend   CLASS 2: BEND  (57%)
+ class4_2026_06_19_15_13_41.csv connector      break  CLASS 3: BREAK  (95%)
+ class4_2026_06_19_15_13_55.csv connector     normal CLASS 1: NORMAL  (49%)
+ class4_2026_06_19_15_14_31.csv connector      break  CLASS 3: BREAK  (59%)
+ class4_2026_06_19_15_14_43.csv connector       bend   CLASS 2: BEND  (53%)
+ class4_2026_06_19_15_14_54.csv      bend      break  CLASS 3: BREAK  (59%)
+ class4_2026_06_19_15_15_32.csv      bend      break  CLASS 3: BREAK  (56%)
+ class4_2026_06_19_15_15_49.csv connector       bend   CLASS 2: BEND  (66%)
+ class4_2026_06_19_15_16_00.csv connector      break  CLASS 3: BREAK  (73%)
+ class4_2026_06_19_15_16_35.csv connector      break  CLASS 3: BREAK  (64%)
+ class4_2026_06_19_15_16_47.csv    normal      break  CLASS 3: BREAK  (68%)
+ class4_2026_06_19_15_17_19.csv connector      break  CLASS 3: BREAK  (67%)
+ class4_2026_06_19_15_17_46.csv      bend      break  CLASS 3: BREAK  (77%)
+ class4_2026_06_19_15_18_01.csv      bend      break  CLASS 3: BREAK  (58%)
+ class4_2026_06_19_15_18_27.csv connector      break  CLASS 3: BREAK  (55%)
+ class4_2026_06_19_15_18_37.csv connector      break  CLASS 3: BREAK  (73%)
+ class4_2026_06_19_15_18_46.csv connector      break  CLASS 3: BREAK  (73%)
+ class4_2026_06_19_15_18_52.csv connector      break  CLASS 3: BREAK  (73%)
+ class4_2026_06_19_15_21_23.csv    normal      break  CLASS 3: BREAK  (73%)
+ class4_2026_06_19_15_22_34.csv connector      break  CLASS 3: BREAK  (73%)
+ class4_2026_06_19_15_22_47.csv connector      break  CLASS 3: BREAK  (51%)
+ class4_2026_06_19_15_22_55.csv      bend      break  CLASS 3: BREAK  (76%)
+ class4_2026_06_19_15_23_04.csv connector      break  CLASS 3: BREAK  (73%)
+ class4_2026_06_19_15_23_14.csv    normal      break  CLASS 3: BREAK  (50%)
+ class4_2026_06_19_15_23_28.csv connector      break  CLASS 3: BREAK  (73%)
+ class4_2026_06_19_15_23_58.csv connector      break  CLASS 3: BREAK  (51%)
+ class4_2026_06_19_15_24_11.csv connector      break  CLASS 3: BREAK  (64%)
+ class4_2026_06_19_15_24_42.csv connector      break  CLASS 3: BREAK  (73%)
+ class4_2026_06_19_15_24_52.csv      bend      break  CLASS 3: BREAK  (52%)
+ class4_2026_06_19_15_25_04.csv connector       bend   CLASS 2: BEND  (41%)
+ class4_2026_06_19_15_25_33.csv      bend      break  CLASS 3: BREAK  (53%)
+ class4_2026_06_19_15_26_16.csv    normal      break  CLASS 3: BREAK  (73%)
+ class4_2026_06_19_15_26_31.csv      bend      break  CLASS 3: BREAK  (67%)
+ class4_2026_06_19_15_27_28.csv connector      break  CLASS 3: BREAK  (55%)
+ class4_2026_06_19_15_28_18.csv      bend      break  CLASS 3: BREAK  (70%)
+ class4_2026_06_19_15_28_44.csv connector      break  CLASS 3: BREAK  (73%)

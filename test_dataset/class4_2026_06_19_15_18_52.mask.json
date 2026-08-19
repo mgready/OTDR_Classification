@@ -1,5 +1,5 @@
 {
-  "file": "class4_2026_06_19_15_13_04.csv",
+  "file": "class4_2026_06_19_15_18_52.csv",
   "expected_length_m": 150.0,
   "gt_class": "connector",
   "gt_length_m": 199.737,
@@ -7,17 +7,17 @@
   "annotations": [
     {
       "m": 66.37,
-      "db": -5.47,
+      "db": -5.64,
       "type": "connector"
     },
     {
       "m": 127.63,
-      "db": -11.01,
+      "db": -11.16,
       "type": "connector"
     },
     {
-      "m": 143.26,
-      "db": -15.31,
+      "m": 142.94,
+      "db": -15.22,
       "type": "break"
     }
   ]

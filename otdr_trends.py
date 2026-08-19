@@ -103,18 +103,50 @@ REGION_METHODS = {"variance": _noise_variance, "level": _noise_level, "gradient"
 
 
 def find_valid_region(km, db, method="variance", noise_win_m=2.5,
-                      slope_thr_db_per_km=60.0, **kw):
-    """(start, eof) of the coherent-backscatter span.
+                      slope_thr_db_per_km=60.0, launch_guard_m=5.0,
+                      reflect_thr_db=3.0, max_extend_passes=3, **kw):
+    """
+    (start, eof) с итеративным расширением: если сразу после найденного eof
+    стоит острый рефлективный пик (connector), и после него на протяжении
+    хотя бы noise_win_m*4 метров сигнал ОСТАЁТСЯ стабильным (не хаотичным) —
+    значит это был промежуточный connector, а не настоящий конец волокна.
+    В этом случае продолжаем искать eof дальше, начиная от пика.
+    """
+    from scipy.signal import find_peaks
 
-    `method` selects the noise-onset rule:
-        'variance' (default) — sustained high local variance
-        'level'              — signal far below the backscatter level
-        'gradient'           — bottom of the steepest collapse
-    Launch-start detection (plateau after the pulse) is shared by all methods."""
     w = _m_to_samples(km, noise_win_m)
     start = find_launch_start(km, db, w, slope_thr_db_per_km)
+    guard_samples = _m_to_samples(km, launch_guard_m)
+    start = min(start + guard_samples, len(db) - 2)
+
     fn = REGION_METHODS.get(method, _noise_variance)
-    eof = fn(km, db, w, start, **kw)
+    search_start = start
+    eof = fn(km, db, w, search_start, **kw)
+
+    check_w = _m_to_samples(km, noise_win_m * 4)
+    for _ in range(max_extend_passes):
+        # есть ли рефлективный пик ПРЯМО НА границе eof (в пределах noise_win_m)?
+        window_lo, window_hi = max(0, eof - w), min(len(db), eof + w)
+        sm_local = _smooth(db[max(0, eof - 3*w):min(len(db), eof + 3*w)], max(3, w // 2))
+        local_peaks, _ = find_peaks(sm_local, prominence=reflect_thr_db)
+        if len(local_peaks) == 0:
+            break  # обычный шум, не промежуточный connector -> останавливаемся
+
+        # проверяем: после этого пика сигнал СТАБИЛЕН ещё check_w самплов?
+        after_peak = min(len(db), eof + w + check_w)
+        if after_peak - (eof + w) < check_w * 0.5:
+            break  # данных не хватает для проверки, останавливаемся на этом eof
+        segment_after = db[eof + w: after_peak]
+        if segment_after.std() > kw.get("std_thr", 3.0) * 1.5:
+            break  # после пика всё равно хаос -> это был настоящий конец, не продолжаем
+
+        # сигнал после пика стабилен -> это промежуточный connector, ищем eof ДАЛЬШЕ
+        new_search_start = eof + w
+        new_eof = fn(km, db, w, new_search_start, **kw)
+        if new_eof <= eof:
+            break
+        eof = new_eof
+
     return start, max(start + 1, eof)
 
 
@@ -213,15 +245,19 @@ def merge_events(events, merge_m=12.0):
 
 def analyze_trends(km, db, expected_length_m=None, region_method="variance",
                    loss_thr_db=0.5, reflect_thr_db=3.0, win_m=1.5,
-                   end_frac=0.90, merge_m=12.0, snap_end=True, snap_tol=0.12):
+                   end_frac=0.90, merge_m=12.0, snap_end=True, snap_tol=0.12,
+                   launch_guard_m=5.0):
     """Full decomposition of one (km, dB) trace.
 
     - merge_m : consecutive same-type events within this many metres collapse into one,
                 so a continuous bend reads as ONE bend instead of 7-12.
-    - terminal: labelled 'break' if it ends before end_frac of the typed length; if it
-                ends NEAR the typed length (within snap_tol) it is the normal 'end',
-                reported at the nominal length for a consistent, deterministic marker."""
-    start, eof = find_valid_region(km, db, method=region_method)
+    - terminal: находит ПОСЛЕДНИЙ рефлективный пик перед eof как terminus (без
+                ограничения "только последние 20м" — это и было причиной путаницы
+                connector@127m / break@143m). Дальше break/end решается по
+                expected_length_m, но САМ ПОИСК terminus от него не зависит."""
+    from otdr_trends import detect_breakpoints, fit_trends, classify_events, merge_events
+
+    start, eof = find_valid_region(km, db, method=region_method, launch_guard_m=launch_guard_m)
     bps, refl_set, sm = detect_breakpoints(km, db, start, eof,
                                            win_m=win_m, loss_thr_db=loss_thr_db,
                                            reflect_thr_db=reflect_thr_db)
@@ -230,23 +266,31 @@ def analyze_trends(km, db, expected_length_m=None, region_method="variance",
                              win_m=win_m, expected_length_m=expected_length_m)
     events = merge_events(events, merge_m=merge_m)
 
-    # terminal: anchor to the END REFLECTION (the last strong reflection before the noise)
-    # so the Fresnel end-spike is ALWAYS the terminus, never a stray connector. This is what
-    # keeps near-identical traces from flipping between 'connector' and 'end'.
+    # terminus = последний рефлективный пик перед началом шума (eof),
+    # БЕЗ ограничения "только последние 20м" — это чинит баг с connector@127/break@143.
+    if refl_set:
+        term_idx = max(i for i in refl_set if i < eof)
+    else:
+        term_idx = eof
+
+    term_m = float(km[term_idx] * 1000.0)
+    events = [e for e in events if abs(e["m"] - term_m) > 5.0]
+
     if expected_length_m:
-        near_end = [i for i in refl_set if i < eof and (km[eof] - km[i]) < 0.020]
-        term_idx = max(near_end) if near_end else eof
-        term_m = float(km[term_idx] * 1000.0)
-        events = [e for e in events if abs(e["m"] - term_m) > 5.0]   # end spike is terminus, not connector
-        if abs(term_m - expected_length_m) <= snap_tol * expected_length_m:
-            pos, ttype = (expected_length_m if snap_end else term_m), "end"
-        elif term_m < expected_length_m * end_frac:
+        if term_m < expected_length_m * end_frac:
             pos, ttype = term_m, "break"
+        elif abs(term_m - expected_length_m) <= snap_tol * expected_length_m:
+            pos, ttype = (expected_length_m if snap_end else term_m), "end"
         else:
             pos, ttype = term_m, "end"
-        events.append({"km": pos / 1000.0, "m": pos, "type": ttype,
-                       "loss_dB": 0.0, "reflectance_dB": 0.0})
+    else:
+        pos, ttype = term_m, "end"
 
+    # ЭТО БЫЛО ПОТЕРЯНО — обязательно добавляем terminus-событие в список:
+    events.append({"km": pos / 1000.0, "m": pos, "type": ttype,
+                   "loss_dB": 0.0, "reflectance_dB": 0.0})
+
+    # И ЭТО БЫЛО ПОТЕРЯНО — обязательный return, без него функция возвращала None:
     return {"km": km, "db": db, "smooth": sm,
             "start": start, "eof": eof,
             "segments": segs, "events": events}
