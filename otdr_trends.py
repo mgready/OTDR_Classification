@@ -103,50 +103,13 @@ REGION_METHODS = {"variance": _noise_variance, "level": _noise_level, "gradient"
 
 
 def find_valid_region(km, db, method="variance", noise_win_m=2.5,
-                      slope_thr_db_per_km=60.0, launch_guard_m=5.0,
-                      reflect_thr_db=3.0, max_extend_passes=3, **kw):
-    """
-    (start, eof) с итеративным расширением: если сразу после найденного eof
-    стоит острый рефлективный пик (connector), и после него на протяжении
-    хотя бы noise_win_m*4 метров сигнал ОСТАЁТСЯ стабильным (не хаотичным) —
-    значит это был промежуточный connector, а не настоящий конец волокна.
-    В этом случае продолжаем искать eof дальше, начиная от пика.
-    """
-    from scipy.signal import find_peaks
-
+                      slope_thr_db_per_km=60.0, launch_guard_m=5.0, **kw):
     w = _m_to_samples(km, noise_win_m)
     start = find_launch_start(km, db, w, slope_thr_db_per_km)
     guard_samples = _m_to_samples(km, launch_guard_m)
     start = min(start + guard_samples, len(db) - 2)
-
     fn = REGION_METHODS.get(method, _noise_variance)
-    search_start = start
-    eof = fn(km, db, w, search_start, **kw)
-
-    check_w = _m_to_samples(km, noise_win_m * 4)
-    for _ in range(max_extend_passes):
-        # есть ли рефлективный пик ПРЯМО НА границе eof (в пределах noise_win_m)?
-        window_lo, window_hi = max(0, eof - w), min(len(db), eof + w)
-        sm_local = _smooth(db[max(0, eof - 3*w):min(len(db), eof + 3*w)], max(3, w // 2))
-        local_peaks, _ = find_peaks(sm_local, prominence=reflect_thr_db)
-        if len(local_peaks) == 0:
-            break  # обычный шум, не промежуточный connector -> останавливаемся
-
-        # проверяем: после этого пика сигнал СТАБИЛЕН ещё check_w самплов?
-        after_peak = min(len(db), eof + w + check_w)
-        if after_peak - (eof + w) < check_w * 0.5:
-            break  # данных не хватает для проверки, останавливаемся на этом eof
-        segment_after = db[eof + w: after_peak]
-        if segment_after.std() > kw.get("std_thr", 3.0) * 1.5:
-            break  # после пика всё равно хаос -> это был настоящий конец, не продолжаем
-
-        # сигнал после пика стабилен -> это промежуточный connector, ищем eof ДАЛЬШЕ
-        new_search_start = eof + w
-        new_eof = fn(km, db, w, new_search_start, **kw)
-        if new_eof <= eof:
-            break
-        eof = new_eof
-
+    eof = fn(km, db, w, start, **kw)
     return start, max(start + 1, eof)
 
 
