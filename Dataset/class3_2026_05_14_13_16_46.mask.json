@@ -1,0 +1,24 @@
+{
+  "file": "class3_2026_05_14_13_16_46.csv",
+  "expected_length_m": 150.0,
+  "gt_class": "normal",
+  "gt_length_m": 199.737,
+  "ignore_zones_m": [],
+  "annotations": [
+    {
+      "m": 66.37,
+      "db": -9.32,
+      "type": "connector"
+    },
+    {
+      "m": 35.42,
+      "db": -13.31,
+      "type": "connector"
+    },
+    {
+      "m": 70.19,
+      "db": -19.51,
+      "type": "break"
+    }
+  ]
+}
