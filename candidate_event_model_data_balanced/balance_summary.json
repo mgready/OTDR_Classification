@@ -1,0 +1,21 @@
+{
+  "input_dir":"C:\\Users\\PCA\\OneDrive - Astana IT University\\Desktop\\OTDR_CLassification\\candidate_event_model_data",
+  "background_per_positive":4.0,
+  "hard_fraction":0.7,
+  "seed":42,
+  "train_rows":3280,
+  "val_rows":1125,
+  "train_counts":{
+    "background":2624,
+    "break":309,
+    "connector":297,
+    "bend":50
+  },
+  "val_counts":{
+    "background":900,
+    "break":104,
+    "connector":100,
+    "bend":21
+  },
+  "note":"All real candidates retained. Only background candidates were downsampled."
+}

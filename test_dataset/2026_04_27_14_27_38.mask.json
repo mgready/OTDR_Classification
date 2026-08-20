@@ -6,9 +6,14 @@
   "ignore_zones_m": [],
   "annotations": [
     {
-      "m": 125.07,
-      "db": -14.71,
+      "m": 131.78,
+      "db": -16.69,
       "type": "break"
+    },
+    {
+      "m": 127.63,
+      "db": -5.94,
+      "type": "connector"
     }
   ]
 }

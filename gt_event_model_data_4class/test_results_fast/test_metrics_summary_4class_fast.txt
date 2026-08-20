@@ -1,0 +1,17 @@
+FAST STRICT 4-CLASS END-TO-END TEST
+Prediction phase used CSV only. JSON masks were opened only after prediction for evaluation.
+CSV files: 59 | predicted files: 59
+Confidence threshold: 0.45 | match tolerance: ±5.0m
+Overall TP=175 FP=30 FN=43
+Overall precision=0.8537
+Overall recall=0.8028
+Overall F1=0.8274
+
+Per class:
+    class  TP  FP  FN  precision   recall       f1
+     bend  12  17   8   0.413793 0.600000 0.489796
+connector 104   1  31   0.990476 0.770370 0.866667
+    break  59  12   4   0.830986 0.936508 0.880597
+
+Errors: 0
+Total elapsed: 13.80s

@@ -11,9 +11,14 @@
       "type": "connector"
     },
     {
+      "m": 127.63,
+      "db": -19.11,
+      "type": "break"
+    },
+    {
       "m": 125.07,
       "db": -12.47,
-      "type": "break"
+      "type": "connector"
     }
   ]
 }

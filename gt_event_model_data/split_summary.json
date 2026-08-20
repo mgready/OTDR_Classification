@@ -1,0 +1,45 @@
+{
+  "n_labeled_files": 414,
+  "n_train_files": 310,
+  "n_val_files": 104,
+  "n_train_events": 831,
+  "n_val_events": 292,
+  "train_class_counts": {
+    "connector": 340,
+    "break": 309,
+    "bend": 182
+  },
+  "val_class_counts": {
+    "connector": 124,
+    "break": 106,
+    "bend": 62
+  },
+  "n_read_errors": 1,
+  "read_errors": [
+    {
+      "file": "class2_2026_04_27_15_36_32.csv",
+      "error": "No numeric data rows found in C:\\Users\\PCA\\OneDrive - Astana IT University\\Desktop\\OTDR_CLassification\\Dataset\\class2_2026_04_27_15_36_32.csv"
+    }
+  ],
+  "feature_columns": [
+    "m_norm",
+    "db_at_event",
+    "local_mean_db",
+    "local_std_db",
+    "pre_mean_db",
+    "post_mean_db",
+    "loss_dB",
+    "peak_above_bg_dB",
+    "pre_slope_dB_per_km",
+    "post_slope_dB_per_km",
+    "slope_change_dB_per_km",
+    "derivative_at_event_dB_per_km",
+    "max_pre_derivative",
+    "min_post_derivative",
+    "pre_std_db",
+    "post_std_db",
+    "post_to_pre_std_ratio",
+    "peak_width_m",
+    "local_range_db"
+  ]
+}

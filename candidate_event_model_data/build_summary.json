@@ -1,0 +1,54 @@
+{
+  "method": "CSV-only candidates; JSON labels assigned after candidates are fixed",
+  "classes": [
+    "bend",
+    "connector",
+    "break",
+    "background"
+  ],
+  "train_files": 310,
+  "val_files": 104,
+  "train_rows": 26608,
+  "val_rows": 8961,
+  "train_counts": {
+    "background": 25952,
+    "break": 309,
+    "connector": 297,
+    "bend": 50
+  },
+  "val_counts": {
+    "background": 8736,
+    "break": 104,
+    "connector": 100,
+    "bend": 21
+  },
+  "train_gt_missed_by_candidate_generator": 175,
+  "val_gt_missed_by_candidate_generator": 67,
+  "errors": [
+    {
+      "file": "class2_2026_04_27_15_36_32.csv",
+      "error": "No numeric data rows found in C:\\Users\\PCA\\OneDrive - Astana IT University\\Desktop\\OTDR_CLassification\\Dataset\\class2_2026_04_27_15_36_32.csv"
+    }
+  ],
+  "feature_columns": [
+    "m_norm",
+    "db_at_event",
+    "local_mean_db",
+    "local_std_db",
+    "pre_mean_db",
+    "post_mean_db",
+    "loss_dB",
+    "peak_above_bg_dB",
+    "pre_slope_dB_per_km",
+    "post_slope_dB_per_km",
+    "slope_change_dB_per_km",
+    "derivative_at_event_dB_per_km",
+    "max_pre_derivative",
+    "min_post_derivative",
+    "pre_std_db",
+    "post_std_db",
+    "post_to_pre_std_ratio",
+    "peak_width_m",
+    "local_range_db"
+  ]
+}

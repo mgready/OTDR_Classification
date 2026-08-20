@@ -1,0 +1,18 @@
+STRICT CANDIDATE-LEVEL END-TO-END TEST
+Phase A used CSV only. JSON masks were opened only after all predictions, for evaluation.
+CSV files: 59 | evaluated masks: 59
+Model: RandomForest
+Confidence threshold: 0.50 | Matching tolerance: ±5.0m
+Overall: TP=170, FP=31, FN=48
+Overall precision=0.8458
+Overall recall=0.7798
+Overall F1=0.8115
+
+Per class:
+    class  TP  FP  FN  precision   recall       f1
+     bend  11  18   9   0.379310 0.550000 0.448980
+connector 111   5  24   0.956897 0.822222 0.884462
+    break  48   8  15   0.857143 0.761905 0.806723
+
+Errors: 0
+Elapsed seconds: 8.18

@@ -11,14 +11,19 @@
       "type": "connector"
     },
     {
-      "m": 71.79,
-      "db": -20.85,
-      "type": "bend"
+      "m": 148.69,
+      "db": -17.26,
+      "type": "break"
     },
     {
-      "m": 143.26,
-      "db": -19.23,
-      "type": "break"
+      "m": 144.86,
+      "db": -7.79,
+      "type": "connector"
+    },
+    {
+      "m": 69.24,
+      "db": -16.32,
+      "type": "bend"
     }
   ]
 }

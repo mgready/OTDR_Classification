@@ -1,0 +1,19 @@
+STRICT END-TO-END TEST
+Prediction used CSV traces only; JSON masks were opened only after prediction for evaluation.
+Test CSV files: 59
+Test files with masks evaluated: 59
+Prediction confidence threshold: 0.45
+Position matching tolerance: ±5.0 m
+
+Overall event detection: TP=199, FP=1015, FN=19
+Overall precision=0.1639
+Overall recall=0.9128
+Overall F1=0.2779
+
+Per class:
+    class  TP  FP  FN  precision   recall       f1
+     bend  10 335  10   0.028986 0.500000 0.054795
+connector 128   9   7   0.934307 0.948148 0.941176
+    break  61 671   2   0.083333 0.968254 0.153459
+
+Prediction/evaluation errors: 0
