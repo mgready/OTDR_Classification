@@ -1,0 +1,16 @@
+STRICT 4-CLASS END-TO-END TEST
+Prediction used CSV only; masks were opened only after predictions for evaluation.
+CSV files: 59 | prediction files: 59
+Confidence threshold: 0.45 | matching tolerance: ±5.0 m
+Overall TP=181 FP=23 FN=37
+Overall precision=0.8873
+Overall recall=0.8303
+Overall F1=0.8578
+
+Per class:
+    class  TP  FP  FN  precision   recall       f1
+     bend   9   8  11   0.529412 0.450000 0.486486
+connector 115   3  20   0.974576 0.851852 0.909091
+    break  57  12   6   0.826087 0.904762 0.863636
+
+Errors: 0
