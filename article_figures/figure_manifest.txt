@@ -1,0 +1,7 @@
+Figure_5a_correct_connector_break.png | source=2026_04_27_14_22_51.csv | GT=2 | TP=2 | FN=0 | FP=0
+Figure_5b_multiple_events.png | source=class4_2026_06_19_15_12_31.csv | GT=4 | TP=4 | FN=0 | FP=0
+Figure_5c_bend_case.png | source=class4_2026_06_19_15_14_54.csv | GT=4 | TP=4 | FN=0 | FP=0
+Figure_5d_error_case.png | source=class4_2026_06_19_15_21_36.csv | GT=4 | TP=2 | FN=2 | FP=3
+Figure_4_test_event_matrix.png | event-level matching matrix on independent test dataset
+Figure_6_per_class_performance.png | precision, recall, and F1 by class
+Table_4_test_metrics.csv | numerical values used in Table 4

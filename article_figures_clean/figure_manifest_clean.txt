@@ -1,0 +1,7 @@
+Figure_5a_connector_break.png | source=2026_04_27_14_22_51.csv | predictions=2 | GT=2 | matched=2 | FN=0 | FP=0
+Figure_5b_multiple_events.png | source=class4_2026_06_19_15_12_31.csv | predictions=4 | GT=4 | matched=4 | FN=0 | FP=0
+Figure_5c_bend.png | source=class4_2026_06_19_15_14_54.csv | predictions=4 | GT=4 | matched=4 | FN=0 | FP=0
+Figure_5d_error_case.png | source=class4_2026_06_19_15_21_36.csv | predictions=5 | GT=4 | matched=2 | FN=2 | FP=3
+Figure_4_matched_event_confusion_matrix.png | 3x3 matrix of matched event classes
+Figure_6_per_class_metrics_clean.png | class-specific precision, recall, and F1
+Table_4_test_metrics_clean.csv | numerical independent-test metrics

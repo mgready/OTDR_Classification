@@ -1,0 +1,5 @@
+class,precision,recall,f1,support
+bend,1.0,1.0,1.0,24
+connector,1.0,1.0,1.0,45
+break,1.0,1.0,1.0,41
+background,1.0,1.0,1.0,205
